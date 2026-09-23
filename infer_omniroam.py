@@ -62,6 +62,11 @@ def run_worker(worker_id: int, device: str, args):
         re_scale_mode, re_scale_target = _parse_re_scale_pose(args.re_scale_pose)
         print(f"[GPU {worker_id}] re_scale_pose={args.re_scale_pose} -> mode={re_scale_mode}, target={re_scale_target}")
 
+        cam_traj_file = None
+        if args.cam_traj_file:
+            cam_traj_file = _load_cam_traj_file(args.cam_traj_file)
+            print(f"[GPU {worker_id}] custom camera trajectory: {args.cam_traj_file} shape={tuple(cam_traj_file.shape)}")
+
 
 
 
@@ -212,7 +217,9 @@ def run_worker(worker_id: int, device: str, args):
                 traj_scale_tensor = None
                 pos81 = None
                 if args.use_cam_traj:
-                    if args.traj_mode in ("gt", "random_gt"):
+                    if cam_traj_file is not None:
+                        cam_traj = cam_traj_file
+                    elif args.traj_mode in ("gt", "random_gt"):
                         preset = args.traj_preset
                         cam_traj = make_cam_traj_from_preset_refspace(
                             preset=preset,
@@ -322,6 +329,15 @@ def _rescale_cam_traj_identityR(cam_traj_21: torch.Tensor, mode: str, s_target: 
     alpha = float(s_tgt / s_local)
     M[:, :, 3] = t * alpha
     return M.reshape(-1, 12), s_local, alpha
+
+
+def _load_cam_traj_file(path: str) -> torch.Tensor:
+    array = np.load(path)
+    if array.shape != (21, 12):
+        raise ValueError(f"Expected camera trajectory shape (21, 12), got {array.shape}: {path}")
+    if not np.isfinite(array).all():
+        raise ValueError(f"Camera trajectory contains NaN/Inf: {path}")
+    return torch.from_numpy(array.astype(np.float32))
 
 
 
@@ -616,6 +632,8 @@ def parse_args():
 
     p.add_argument("--use_cam_traj", action="store_true",
                    help="Enable camera trajectory condition (21x12 [I|t] per-sample). Model ckpt must contain cam_traj_encoder.")
+    p.add_argument("--cam_traj_file", type=str, default=None,
+                   help="Load an exact (21,12) camera trajectory .npy file instead of a preset.")
     p.add_argument("--traj_mode", type=str, default="fixed",
                    choices=["gt","random_gt","fixed","random"],
                    help="gt: use target segment real trajectory (requires rig/colmap); random_gt: randomly select continuous GT trajectory from this video (no need to be adjacent to target); fixed: preset straight line; random: random from several presets.")
@@ -659,6 +677,9 @@ def parse_args():
 
 def main():
     args = parse_args()
+
+    if args.cam_traj_file:
+        args.use_cam_traj = True
 
     if args.enable_refine:
         if not args.refine_local_dir or not os.path.isdir(args.refine_local_dir):
