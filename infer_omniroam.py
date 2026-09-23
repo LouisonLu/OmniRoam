@@ -62,10 +62,12 @@ def run_worker(worker_id: int, device: str, args):
         re_scale_mode, re_scale_target = _parse_re_scale_pose(args.re_scale_pose)
         print(f"[GPU {worker_id}] re_scale_pose={args.re_scale_pose} -> mode={re_scale_mode}, target={re_scale_target}")
 
-        cam_traj_file = None
+        shared_cam_traj = None
         if args.cam_traj_file:
-            cam_traj_file = _load_cam_traj_file(args.cam_traj_file)
-            print(f"[GPU {worker_id}] custom camera trajectory: {args.cam_traj_file} shape={tuple(cam_traj_file.shape)}")
+            shared_cam_traj = _load_cam_traj_file(args.cam_traj_file)
+            print(f"[GPU {worker_id}] custom camera trajectory: {args.cam_traj_file} shape={tuple(shared_cam_traj.shape)}")
+        if args.cam_traj_dir:
+            print(f"[GPU {worker_id}] per-image camera trajectory directory: {args.cam_traj_dir}")
 
 
 
@@ -217,8 +219,19 @@ def run_worker(worker_id: int, device: str, args):
                 traj_scale_tensor = None
                 pos81 = None
                 if args.use_cam_traj:
-                    if cam_traj_file is not None:
-                        cam_traj = cam_traj_file
+                    current_cam_traj = shared_cam_traj
+                    if args.cam_traj_dir:
+                        current_cam_traj_path = os.path.join(
+                            args.cam_traj_dir, f"{video_id}.npy"
+                        )
+                        current_cam_traj = _load_cam_traj_file(current_cam_traj_path)
+                        print(
+                            f"[GPU {worker_id}] custom camera trajectory: "
+                            f"{current_cam_traj_path} shape={tuple(current_cam_traj.shape)}"
+                        )
+
+                    if current_cam_traj is not None:
+                        cam_traj = current_cam_traj
                         cam_traj, s_local, alpha = _rescale_cam_traj_identityR(
                             cam_traj, re_scale_mode, re_scale_target
                         )
@@ -641,6 +654,8 @@ def parse_args():
                    help="Enable camera trajectory condition (21x12 [I|t] per-sample). Model ckpt must contain cam_traj_encoder.")
     p.add_argument("--cam_traj_file", type=str, default=None,
                    help="Load an exact (21,12) camera trajectory .npy file instead of a preset.")
+    p.add_argument("--cam_traj_dir", type=str, default=None,
+                   help="Load one trajectory per local image; expects <image_stem>.npy in this directory.")
     p.add_argument("--traj_mode", type=str, default="fixed",
                    choices=["gt","random_gt","fixed","random"],
                    help="gt: use target segment real trajectory (requires rig/colmap); random_gt: randomly select continuous GT trajectory from this video (no need to be adjacent to target); fixed: preset straight line; random: random from several presets.")
@@ -685,7 +700,10 @@ def parse_args():
 def main():
     args = parse_args()
 
-    if args.cam_traj_file:
+    if args.cam_traj_file and args.cam_traj_dir:
+        raise ValueError("Use only one of --cam_traj_file and --cam_traj_dir.")
+
+    if args.cam_traj_file or args.cam_traj_dir:
         args.use_cam_traj = True
 
     if args.enable_refine:
@@ -715,6 +733,19 @@ def main():
         img_paths = list_images_in_dir(args.local_images_dir, args.local_image_exts)
         if len(img_paths) == 0:
             raise RuntimeError(f"No matching images in directory: {args.local_images_dir} (exts: {args.local_image_exts})")
+
+        if args.cam_traj_dir:
+            missing = [
+                os.path.join(args.cam_traj_dir, f"{os.path.splitext(os.path.basename(path))[0]}.npy")
+                for path in img_paths
+                if not os.path.isfile(
+                    os.path.join(args.cam_traj_dir, f"{os.path.splitext(os.path.basename(path))[0]}.npy")
+                )
+            ]
+            if missing:
+                raise RuntimeError(
+                    f"Missing {len(missing)} per-image camera trajectories; first missing: {missing[0]}"
+                )
         
         print(f"[INFO] Found {len(img_paths)} images in {args.local_images_dir}")
         input_list = img_paths
