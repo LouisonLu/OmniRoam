@@ -234,6 +234,28 @@ python infer_omniroam.py \
 
 Set `scale` using `--speed_fixed` between `1.0` and `8.0`.
 
+To use a custom camera trajectory instead of a built-in preset, provide a NumPy
+file with shape `(21, 12)` using the same flattened `[I|t]` convention as the
+trajectory condition:
+
+```bash
+python infer_omniroam.py \
+  --local_images_dir vis_images \
+  --height 480 \
+  --width 960 \
+  --num_frames 81 \
+  --ckpt_path models/OmniRoam/Preview/preview.ckpt \
+  --use_cam_traj \
+  --cam_traj_file /path/to/camera_trajectory_21x12.npy \
+  --cfg_scale 5.0 \
+  --num_inference_steps 50 \
+  --output_dir ./custom_trajectory_output
+```
+
+The file is only an alternative source for the existing camera-trajectory
+conditioning tensor; it does not change the model, sampler, latent shape, or
+denoising computation.
+
 ### Self-Forcing Stage
 
 For fast preview generation with Self-forcing distillation:
