@@ -219,6 +219,13 @@ def run_worker(worker_id: int, device: str, args):
                 if args.use_cam_traj:
                     if cam_traj_file is not None:
                         cam_traj = cam_traj_file
+                        cam_traj, s_local, alpha = _rescale_cam_traj_identityR(
+                            cam_traj, re_scale_mode, re_scale_target
+                        )
+                        print(
+                            f"[GPU {worker_id}] [re_scale] custom_file "
+                            f"mode={re_scale_mode} s_local={s_local} alpha={alpha}"
+                        )
                     elif args.traj_mode in ("gt", "random_gt"):
                         preset = args.traj_preset
                         cam_traj = make_cam_traj_from_preset_refspace(
@@ -654,7 +661,7 @@ def parse_args():
         "--re_scale_pose", type=str, default="none",
         help="Rescale camera trajectory translations to a unified target scale. "
              "Options: 'none' | 'unit_median' | 'fixed:<float>' (e.g., fixed:0.5). "
-             "Only applies to identityR cam_traj; velocity+scale path is untouched."
+             "Applies to preset and custom [R|t] trajectories; rotations are unchanged."
     )
     
     p.add_argument("--enable_refine", action="store_true", default=False,
